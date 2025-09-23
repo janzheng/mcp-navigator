@@ -4,6 +4,48 @@ import { toolsRegistry, resolveToolConfig, toolSchemaCache } from './tools.js';
 import { lookupFromMcpRegistry } from './registry.js';
 import { llmRouter, generateCurlCommand } from './ai.js';
 
+// Configuration for handling different types of MCP servers
+const MCP_SERVER_CONFIG = {
+  // Default configuration for any MCP server
+  default: {
+    commonEndpoints: ['/mcp', '/sse'],
+    defaultHeaders: {},
+    requireApproval: 'never'
+  },
+  
+  // Override patterns can be added here if needed
+  // Example: 'example.com': { specialHandling: true }
+};
+
+// Helper to get cached tool schema for a specific tool
+function getCachedToolSchema(toolName, serverUrl) {
+  const cacheKey = `${toolName}_${serverUrl}`;
+  const cachedTools = toolSchemaCache.get(cacheKey);
+  if (cachedTools && Array.isArray(cachedTools)) {
+    return cachedTools.find(tool => tool.name === toolName);
+  }
+  return null;
+}
+
+// Helper to get server configuration
+function getMcpServerConfig(url) {
+  try {
+    const urlObj = new URL(url);
+    const hostname = urlObj.hostname;
+    
+    // Check for specific hostname configurations
+    for (const [pattern, config] of Object.entries(MCP_SERVER_CONFIG)) {
+      if (pattern !== 'default' && hostname.includes(pattern)) {
+        return { ...MCP_SERVER_CONFIG.default, ...config };
+      }
+    }
+    
+    return MCP_SERVER_CONFIG.default;
+  } catch {
+    return MCP_SERVER_CONFIG.default;
+  }
+}
+
 // Function to dynamically discover actual tools from an MCP server
 export async function discoverMcpTools(toolName, toolConfig, apiKey, model) {
   const cacheKey = `${toolName}_${toolConfig.server_url}`;
@@ -53,17 +95,18 @@ export async function discoverMcpTools(toolName, toolConfig, apiKey, model) {
 function createConfigFromUrl(url) {
   try {
     const urlObj = new URL(url);
-    const safeName = urlObj.hostname.replace(/[^a-zA-Z0-9]/g, '_') + '_custom';
+    const serverConfig = getMcpServerConfig(url);
     
     return {
       type: "mcp",
       server_label: `Custom MCP Server (${urlObj.hostname})`,
       server_url: url,
-      headers: {},
-      require_approval: "never",
+      headers: serverConfig.defaultHeaders,
+      require_approval: serverConfig.requireApproval,
       _meta: {
         description: `Custom MCP server at ${urlObj.hostname}`,
-        source: 'dynamic_url'
+        source: 'dynamic_url',
+        config: serverConfig
       }
     };
   } catch (error) {
@@ -83,7 +126,7 @@ function isUrlTool(toolParam) {
 }
 
 // Core function to handle tool lookup and execution
-export async function handleToolExecution(toolsParam, query, model, apiKey, userToolHeaders = {}) {
+export async function handleToolExecution(toolsParam, query, model, apiKey, userToolHeaders = {}, conversationHistory = []) {
   if (!toolsParam) {
   return {
       error: true, 
@@ -112,10 +155,14 @@ export async function handleToolExecution(toolsParam, query, model, apiKey, user
   const toolNames = toolsParam.split(',').map(t => t.trim());
   const tools = [];
 
+  // Extract discovered servers from conversation history
+  const discoveredServers = extractDiscoveredServers(conversationHistory);
+  
   for (const toolName of toolNames) {
     let toolConfig = toolsRegistry[toolName];
     let isFromMcpRegistry = false;
     let isFromUrl = false;
+    let isFromConversation = false;
     
     // Check if toolName is a URL
     if (isUrlTool(toolName)) {
@@ -123,6 +170,18 @@ export async function handleToolExecution(toolsParam, query, model, apiKey, user
       if (toolConfig) {
         isFromUrl = true;
         console.log(`Created dynamic tool config from URL: ${toolName}`);
+      }
+    }
+    
+    // If not found locally and not a URL, check conversation history for discovered servers
+    if (!toolConfig) {
+      const serverUrl = findServerForTool(toolName, discoveredServers);
+      if (serverUrl) {
+        toolConfig = createConfigFromUrl(serverUrl);
+        if (toolConfig) {
+          isFromConversation = true;
+          console.log(`Using tool '${toolName}' from conversation-discovered server: ${serverUrl}`);
+        }
       }
     }
     
@@ -152,7 +211,26 @@ export async function handleToolExecution(toolsParam, query, model, apiKey, user
     }
 
     // Get user-provided headers for this specific tool
-    const toolHeaders = userToolHeaders[toolName] || {};
+    // Try multiple potential header mappings
+    let toolHeaders = userToolHeaders[toolName] || {};
+    
+    // If no direct match, try variations of the tool name
+    if (Object.keys(toolHeaders).length === 0) {
+      const possibleKeys = [
+        toolName.toLowerCase(),
+        toolName.replace(/[^a-zA-Z0-9]/g, '_'),
+        toolName.split('/').pop(), // For registry names like "ai.waystation/gmail"
+        toolName.split('.').pop(), // For domain-like names
+      ];
+      
+      for (const key of possibleKeys) {
+        if (userToolHeaders[key]) {
+          toolHeaders = userToolHeaders[key];
+          console.log(`Mapped tool '${toolName}' to headers from key '${key}'`);
+          break;
+        }
+      }
+    }
 
     // Resolve tool configuration with user headers
     const resolvedTool = resolveToolConfig(toolConfig, toolHeaders);
@@ -177,10 +255,83 @@ export async function handleToolExecution(toolsParam, query, model, apiKey, user
   }
 
   try {
-    const result = await groqResponses(apiKey, model, query, tools);
+    // For simple tool calls, check if we have cached schema information
+    let modifiedQuery = query;
+    if (toolNames.length === 1 && (query.toLowerCase().includes('run ') || query.toLowerCase().includes('execute '))) {
+      const toolName = toolNames[0];
+      
+      // Check if we have cached schema for this tool
+      const serverUrl = tools[0]?.server_url;
+      if (serverUrl) {
+        const toolSchema = getCachedToolSchema(toolName, serverUrl);
+        if (toolSchema) {
+          const params = toolSchema.inputSchema?.properties || {};
+          const paramNames = Object.keys(params);
+          console.log(`Found cached schema for ${toolName}:`, paramNames.length ? paramNames : 'no parameters');
+          
+          if (paramNames.length === 0) {
+            // Tool takes no parameters
+            modifiedQuery = `Use the ${toolName} tool without any parameters`;
+          } else {
+            // Tool has parameters - be more explicit about what we want
+            modifiedQuery = `Use the ${toolName} tool${paramNames.includes('topic') ? '' : ' without specifying a topic'}`;
+          }
+        } else {
+          // No cached schema - use conservative approach
+          modifiedQuery = `Use the ${toolName} tool with default settings`;
+        }
+        console.log(`Modified query for tool execution: ${modifiedQuery}`);
+      }
+    }
+    
+    const result = await groqResponses(apiKey, model, modifiedQuery, tools);
     return { error: false, response: result };
   } catch (error) {
     console.error('Tool execution error:', error);
+    
+    // If it's a schema validation error, try with a simpler approach
+    if (error.message.includes('did not match schema') && toolNames.length === 1) {
+      console.log('Attempting retry with simplified parameters...');
+      try {
+        const simpleQuery = `Use the ${toolNames[0]} tool`;
+        const result = await groqResponses(apiKey, model, simpleQuery, tools);
+        return { error: false, response: result };
+      } catch (retryError) {
+        console.error('Retry also failed:', retryError.message);
+        // Continue with original error handling below
+      }
+    }
+    
+    // Enhanced error handling for MCP server issues
+    if ((error.message.includes('500') || error.message.includes('400')) && tools.some(tool => tool.type === 'mcp')) {
+      const mcpServerUrls = tools.filter(tool => tool.type === 'mcp').map(tool => tool.server_url);
+      
+      return {
+        error: true,
+        status: 500,
+        response: {
+          error: error.message.includes('400') ? 'MCP Tool Schema Validation Failed' : 'MCP Server Execution Failed',
+          details: error.message,
+          mcp_servers: mcpServerUrls,
+          suggestion: error.message.includes('400') 
+            ? 'The MCP tool was found but there\'s a parameter schema mismatch. This usually means the tool expects different parameters than what was provided.'
+            : 'This appears to be an issue with Groq\'s Remote MCP API when executing tools from this server. The server discovery worked, but execution failed.',
+          troubleshooting: error.message.includes('400') ? [
+            'Tool schema validation failed - the tool parameters don\'t match the expected schema',
+            'This could be due to incomplete schema information during tool discovery',
+            'Try using the tool with explicit parameters if you know the expected format',
+            'The MCP server may need to provide more detailed schema information'
+          ] : [
+            'The MCP server is accessible and tools were discovered successfully',
+            'This may be a temporary issue with Groq\'s Remote MCP implementation',
+            'Try again in a few moments',
+            'Use the generated curl command to test the API directly',
+            'Consider trying a different MCP server if the issue persists'
+          ]
+        }
+      };
+    }
+    
     return { 
       error: true, 
       status: error.message.includes('401') ? 401 : 500,
@@ -190,7 +341,7 @@ export async function handleToolExecution(toolsParam, query, model, apiKey, user
 }
 
 // Core function to handle tool listing
-export async function handleToolListing(toolsParam, model, apiKey, userToolHeaders = {}) {
+export async function handleToolListing(toolsParam, model, apiKey, userToolHeaders = {}, conversationHistory = []) {
   if (!toolsParam) {
     // Return all available tools from registry
     return {
@@ -210,10 +361,14 @@ export async function handleToolListing(toolsParam, model, apiKey, userToolHeade
   const toolNames = toolsParam.split(',').map(t => t.trim());
   const toolSchemas = [];
 
+  // Extract discovered servers from conversation history
+  const discoveredServers = extractDiscoveredServers(conversationHistory);
+  
   for (const toolName of toolNames) {
     let toolConfig = toolsRegistry[toolName];
     let isFromMcpRegistry = false;
     let isFromUrl = false;
+    let isFromConversation = false;
     
     // Check if toolName is a URL
     if (isUrlTool(toolName)) {
@@ -221,6 +376,18 @@ export async function handleToolListing(toolsParam, model, apiKey, userToolHeade
       if (toolConfig) {
         isFromUrl = true;
         console.log(`Created dynamic tool config from URL for listing: ${toolName}`);
+      }
+    }
+    
+    // If not found locally and not a URL, check conversation history
+    if (!toolConfig) {
+      const serverUrl = findServerForTool(toolName, discoveredServers);
+      if (serverUrl) {
+        toolConfig = createConfigFromUrl(serverUrl);
+        if (toolConfig) {
+          isFromConversation = true;
+          console.log(`Using tool '${toolName}' from conversation-discovered server for listing: ${serverUrl}`);
+        }
       }
     }
     
@@ -251,7 +418,26 @@ export async function handleToolListing(toolsParam, model, apiKey, userToolHeade
 
     try {
       // Get user-provided headers for this specific tool
-      const toolHeaders = userToolHeaders[toolName] || {};
+      // Try multiple potential header mappings
+      let toolHeaders = userToolHeaders[toolName] || {};
+      
+      // If no direct match, try variations of the tool name
+      if (Object.keys(toolHeaders).length === 0) {
+        const possibleKeys = [
+          toolName.toLowerCase(),
+          toolName.replace(/[^a-zA-Z0-9]/g, '_'),
+          toolName.split('/').pop(), // For registry names like "ai.waystation/gmail"
+          toolName.split('.').pop(), // For domain-like names
+        ];
+        
+        for (const key of possibleKeys) {
+          if (userToolHeaders[key]) {
+            toolHeaders = userToolHeaders[key];
+            console.log(`Mapped tool '${toolName}' to headers from key '${key}' (listing)`);
+            break;
+          }
+        }
+      }
 
       // Resolve tool configuration with user headers
       const resolvedTool = resolveToolConfig(toolConfig, toolHeaders);
@@ -286,19 +472,26 @@ export async function handleToolListing(toolsParam, model, apiKey, userToolHeade
       // Debug: Log the full response to understand the structure
       console.log(`Tool listing response for ${toolName}:`, JSON.stringify(result, null, 2));
       
-      // Extract tool list from the response or use hardcoded actual tools
-      const toolsList = result?.output?.find(item => item.type === 'mcp_list_tools');
-      
-      if (toolsList) {
-        toolSchemas.push({
-          toolName,
-          server_label: toolsList.server_label,
-          tools: toolsList.tools,
-          tool_count: toolsList.tools?.length || 0,
-          source: isFromUrl ? 'dynamic_url' : (isFromMcpRegistry ? 'mcp_registry' : 'local_registry'),
-          ...(isFromMcpRegistry && toolConfig._registry ? { registry_info: toolConfig._registry } : {})
-        });
+    // Extract tool list from the response or use hardcoded actual tools
+    const toolsList = result?.output?.find(item => item.type === 'mcp_list_tools');
+    
+    if (toolsList) {
+      // Store the complete tool schemas for later use
+      if (toolsList.tools && toolsList.tools.length > 0) {
+        const cacheKey = `${toolName}_${toolConfig.server_url}`;
+        toolSchemaCache.set(cacheKey, toolsList.tools);
+        console.log(`Cached tool schemas for ${toolName}:`, toolsList.tools.map(t => `${t.name} (${Object.keys(t.inputSchema?.properties || {}).join(', ') || 'no params'})`));
       }
+      
+      toolSchemas.push({
+        toolName,
+        server_label: toolsList.server_label,
+        tools: toolsList.tools,
+        tool_count: toolsList.tools?.length || 0,
+        source: isFromUrl ? 'dynamic_url' : (isFromMcpRegistry ? 'mcp_registry' : 'local_registry'),
+        ...(isFromMcpRegistry && toolConfig._registry ? { registry_info: toolConfig._registry } : {})
+      });
+    }
     } catch (error) {
       // Handle 401/424 errors gracefully
       if (error.message.includes('401') || error.message.includes('424') || error.message.includes('Authentication failed')) {
@@ -337,7 +530,7 @@ export async function handleToolListing(toolsParam, model, apiKey, userToolHeade
 }
 
 // Execute selected tools
-export async function executeSelectedTools(selectedTools, apiKey, model, toolHeaders = {}) {
+export async function executeSelectedTools(selectedTools, apiKey, model, toolHeaders = {}, conversationHistory = []) {
   const toolNames = selectedTools.selected_tools?.map(t => t.name) || [];
   const query = selectedTools.execution_query || 'Execute selected tools';
   
@@ -348,6 +541,9 @@ export async function executeSelectedTools(selectedTools, apiKey, model, toolHea
     };
   }
 
+  // Extract discovered servers from conversation history
+  const discoveredServers = extractDiscoveredServers(conversationHistory);
+  
   // Build the actual tool configurations for the curl example
   const tools = [];
   for (const selected of selectedTools.selected_tools || []) {
@@ -359,6 +555,17 @@ export async function executeSelectedTools(selectedTools, apiKey, model, toolHea
         // Resolve the actual tool config for Groq
         const resolvedConfig = resolveToolConfig(toolConfig, {});
         tools.push(resolvedConfig);
+      }
+    } else if (selected.registry === 'discovered') {
+      // Tool discovered from conversation history
+      const serverUrl = findServerForTool(selected.name, discoveredServers);
+      if (serverUrl) {
+        toolConfig = createConfigFromUrl(serverUrl);
+        if (toolConfig) {
+          const resolvedConfig = resolveToolConfig(toolConfig, {});
+          tools.push(resolvedConfig);
+          console.log(`Using discovered tool '${selected.name}' from ${serverUrl}`);
+        }
       }
     } else {
       // Public registry tool
@@ -374,8 +581,8 @@ export async function executeSelectedTools(selectedTools, apiKey, model, toolHea
     }
   }
 
-  // Use existing handleToolExecution function
-  const result = await handleToolExecution(toolNames.join(','), query, model, apiKey, toolHeaders);
+  // Use existing handleToolExecution function with conversation history
+  const result = await handleToolExecution(toolNames.join(','), query, model, apiKey, toolHeaders, conversationHistory);
   
   return {
     mode: 'execute',
@@ -387,6 +594,52 @@ export async function executeSelectedTools(selectedTools, apiKey, model, toolHea
     error: result.error ? result.response : null, // Pass error info to frontend
     used_tool_headers: Object.keys(toolHeaders).length > 0 ? Object.keys(toolHeaders) : null
   };
+}
+
+// Function to extract discovered MCP servers from conversation history
+function extractDiscoveredServers(conversationHistory) {
+  const discoveredServers = new Map();
+  
+  // Look through conversation history for introspection responses that discovered tools
+  conversationHistory.forEach(message => {
+    if (message.type === 'assistant' && message.content) {
+      // Look for patterns indicating server discovery
+      const serverUrlMatch = message.content.match(/Available tools at (https?:\/\/[^\s]+)/i);
+      if (serverUrlMatch) {
+        const serverUrl = serverUrlMatch[1];
+        
+        // Extract tool names from the message
+        const toolMatches = message.content.match(/- \*\*([^*]+)\*\*:/g);
+        if (toolMatches) {
+          const tools = toolMatches.map(match => {
+            const toolName = match.match(/- \*\*([^*]+)\*\*/)[1];
+            return toolName;
+          });
+          
+          discoveredServers.set(serverUrl, {
+            url: serverUrl,
+            tools: tools,
+            discoveredAt: message.timestamp
+          });
+          
+          console.log(`Extracted discovered server from conversation: ${serverUrl} with tools: ${tools.join(', ')}`);
+        }
+      }
+    }
+  });
+  
+  return discoveredServers;
+}
+
+// Function to find which server provides a specific tool from conversation history
+function findServerForTool(toolName, discoveredServers) {
+  for (const [serverUrl, serverInfo] of discoveredServers) {
+    if (serverInfo.tools.includes(toolName)) {
+      console.log(`Found tool '${toolName}' on server: ${serverUrl}`);
+      return serverUrl;
+    }
+  }
+  return null;
 }
 
 // Function to extract API keys from user messages
@@ -443,6 +696,57 @@ export async function aiToolSelection(userQuery, mode, apiKey, model, conversati
         return url.includes('/sse') || url.includes('/mcp') || url.includes('api');
       });
       console.log('Detected custom MCP URLs:', customUrls);
+    }
+    
+    // If we have a custom URL and it looks like a direct tool query, handle it specially
+    if (customUrls.length > 0 && (userQuery.toLowerCase().includes('check') || userQuery.toLowerCase().includes('available') || userQuery.toLowerCase().includes('list'))) {
+      // Directly execute the tool listing for the custom URL
+      const customUrl = customUrls[0];
+      console.log(`Direct tool listing for custom URL: ${customUrl}`);
+      
+      try {
+        const result = await handleToolListing(customUrl, model, apiKey, toolHeaders, conversationHistory);
+        
+        if (!result.error && result.response.schemas?.length > 0) {
+          const schema = result.response.schemas[0];
+          
+          let responseText = `## Available tools at ${customUrl}\n\n`;
+          
+          if (schema.tools && schema.tools.length > 0) {
+            responseText += `**Server:** ${schema.server_label}\n`;
+            responseText += `**Total tools:** ${schema.tool_count}\n\n`;
+            responseText += `**Available tools:**\n`;
+            schema.tools.forEach(tool => {
+              responseText += `- **${tool.name}**: ${tool.description || 'No description available'}\n`;
+            });
+          } else if (schema.status === 'inaccessible') {
+            responseText += `❌ **Server is inaccessible**: ${schema.reason}\n\n`;
+            responseText += `This may be due to missing API keys or authentication requirements.`;
+          } else {
+            responseText += `⚠️ **No tools found** at this MCP server.`;
+          }
+          
+          return {
+            introspection: true,
+            response: responseText,
+            custom_url: customUrl,
+            discovered_tools: schema.tools || [],
+            tool_count: schema.tool_count || 0
+          };
+        } else {
+          return {
+            error: true,
+            response: `Failed to connect to MCP server at ${customUrl}: ${result.response?.error || 'Unknown error'}`,
+            custom_url: customUrl
+          };
+        }
+      } catch (error) {
+        return {
+          error: true,
+          response: `Error checking MCP server at ${customUrl}: ${error.message}`,
+          custom_url: customUrl
+        };
+      }
     }
     
     // Merge extracted keys with provided toolHeaders (user provided takes precedence)
@@ -785,6 +1089,8 @@ IMPORTANT: When asked to list tools, ALWAYS show ALL tools from both local and p
     // Create the selection prompt for regular tool execution
     // Build conversation context for tool selection too
     let conversationContext = '';
+    const discoveredServers = extractDiscoveredServers(conversationHistory);
+    
     if (conversationHistory.length > 0) {
       conversationContext = '\n\nCONVERSATION HISTORY:\n';
       conversationHistory.forEach((msg, index) => {
@@ -793,8 +1099,18 @@ IMPORTANT: When asked to list tools, ALWAYS show ALL tools from both local and p
       });
       conversationContext += '\n';
     }
+    
+    // Add discovered servers context
+    let discoveredContext = '';
+    if (discoveredServers.size > 0) {
+      discoveredContext = '\nDISCOVERED MCP SERVERS FROM CONVERSATION:\n';
+      for (const [serverUrl, serverInfo] of discoveredServers) {
+        discoveredContext += `- ${serverUrl}: ${serverInfo.tools.join(', ')}\n`;
+      }
+      discoveredContext += '\nNOTE: You can use any of these discovered tools by name, even if they\'re not in the main registries below.\n';
+    }
 
-    const selectionPrompt = `You are an AI assistant that helps users select the most appropriate MCP (Model Context Protocol) tools for their queries.${conversationContext}
+    const selectionPrompt = `You are an AI assistant that helps users select the most appropriate MCP (Model Context Protocol) tools for their queries.${conversationContext}${discoveredContext}
 
 CURRENT USER QUERY: "${cleanedQuery}"
 
@@ -803,12 +1119,17 @@ AVAILABLE TOOLS:
 LOCAL REGISTRY:
 ${localRegistry.map(tool => `- ${tool.name}: ${tool.description} (${tool.use_cases.join(', ')})`).join('\n')}
 
+DISCOVERED FROM CONVERSATION:
+${Array.from(discoveredServers.values()).flatMap(server => 
+  server.tools.map(toolName => `- ${toolName}: Available from ${server.url}`)
+).join('\n') || '(none)'}
+
 PUBLIC REGISTRY (sample of available tools):
 ${publicRegistry.map(tool => `- ${tool.name}: ${tool.description}`).join('\n')}
 
 YOUR TASK:
 1. Analyze the user query and determine which tool(s) would be most helpful
-2. Select 1-3 most relevant tools (prefer LOCAL tools when possible)
+2. Select 1-3 most relevant tools (prefer LOCAL tools, then DISCOVERED tools, then PUBLIC tools)
 3. Respond with ONLY a JSON object in this exact format:
 
 {
@@ -816,7 +1137,7 @@ YOUR TASK:
     {
       "name": "tool_name",
       "reason": "why this tool is relevant",
-      "registry": "local" or "public"
+      "registry": "local" or "discovered" or "public"
     }
   ],
   "execution_query": "natural language query to send to the selected tools - DO NOT format as function calls"
@@ -878,11 +1199,11 @@ Be concise and practical. Choose tools that can actually help answer the user's 
     }
 
     if (mode === 'curl') {
-      // Generate curl command
-      return await generateCurlCommand(selectedTools, apiKey, model);
+      // Generate curl command with conversation history
+      return await generateCurlCommand(selectedTools, apiKey, model, conversationHistory);
     } else {
-      // Execute the selected tools with merged headers (extracted + provided)
-      return await executeSelectedTools(selectedTools, apiKey, model, mergedToolHeaders);
+      // Execute the selected tools with merged headers (extracted + provided) and conversation history
+      return await executeSelectedTools(selectedTools, apiKey, model, mergedToolHeaders, conversationHistory);
     }
 
   } catch (error) {

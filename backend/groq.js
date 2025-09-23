@@ -59,6 +59,24 @@ export async function groqResponses(apiKey, model, input, tools = []) {
     return JSON.parse(responseText);
   } catch (error) {
     console.error('Groq Responses API error:', error);
+    
+    // Add more detailed logging for debugging MCP server issues
+    if (tools && tools.length > 0) {
+      console.error('Failed request details:');
+      console.error('- Model:', model);
+      console.error('- Input:', input);
+      console.error('- Tools:', JSON.stringify(tools, null, 2));
+      
+      // Check if this is an MCP server issue
+      const mcpTools = tools.filter(tool => tool.type === 'mcp');
+      if (mcpTools.length > 0) {
+        console.error('MCP Server URLs involved:');
+        mcpTools.forEach((tool, index) => {
+          console.error(`  ${index + 1}. ${tool.server_url} (${tool.server_label})`);
+        });
+      }
+    }
+    
     throw error;
   }
 }

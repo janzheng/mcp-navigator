@@ -31,6 +31,9 @@ EXAMPLES:
 - "list tools from ai.waystation/gmail MCP server" → introspection  
 - "what functions does com.apple-rag/mcp-server have" → introspection
 - "tools available for garden.stanislav.svelte-llm/svelte-llm-mcp" → introspection
+- "check what's available at https://example.com/mcp" → introspection
+- "what tools are at https://my-server.com/mcp" → introspection
+- "list endpoints from https://api.example.com/mcp" → introspection
 - "how do I use git?" → direct_response
 - "what's the weather today?" → tool_execution
 - "explain machine learning" → direct_response
@@ -43,6 +46,10 @@ EXAMPLES:
 - "how to use the [tool name] MCP tool" → curl_generation
 - "show me how to use [any MCP tool]" → curl_generation
 - "search for recent papers on AI" → tool_execution
+
+SPECIAL CASES:
+- When user provides a URL (http/https) and asks to "check", "list", "available", "what's at", etc. → introspection
+- URLs should be treated as requests to discover what's available at that endpoint
 
 NOTE: curl_generation is specifically for MCP tool usage with the Groq Responses API (/openai/v1/responses endpoint), not general curl examples or Chat Completions API.`;
 
@@ -134,7 +141,13 @@ Analyze this query and determine the appropriate response type.`;
 }
 
 // Generate curl command for selected tools using Groq Responses API pattern
-export async function generateCurlCommand(selectedTools, apiKey, model) {
+export async function generateCurlCommand(selectedTools, apiKey, model, conversationHistory = []) {
+  // Import the discovery functions
+  const { extractDiscoveredServers, findServerForTool, createConfigFromUrl } = await import('./handlers.js');
+  
+  // Extract discovered servers from conversation history
+  const discoveredServers = extractDiscoveredServers(conversationHistory);
+  
   const tools = [];
   
   for (const selected of selectedTools.selected_tools || []) {
@@ -146,6 +159,17 @@ export async function generateCurlCommand(selectedTools, apiKey, model) {
         // Resolve the actual tool config for Groq
         const resolvedConfig = resolveToolConfig(toolConfig, {});
         tools.push(resolvedConfig);
+      }
+    } else if (selected.registry === 'discovered') {
+      // Tool discovered from conversation history
+      const serverUrl = findServerForTool(selected.name, discoveredServers);
+      if (serverUrl) {
+        toolConfig = createConfigFromUrl(serverUrl);
+        if (toolConfig) {
+          const resolvedConfig = resolveToolConfig(toolConfig, {});
+          tools.push(resolvedConfig);
+          console.log(`Using discovered tool '${selected.name}' for curl generation from ${serverUrl}`);
+        }
       }
     } else {
       // Public registry tool

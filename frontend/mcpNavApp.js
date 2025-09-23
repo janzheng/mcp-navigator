@@ -8,6 +8,13 @@ export default function mcpNavApp() {
     apiKeyInput: '',
     parallelKeyInput: '',
     showApiKeyPanel: false,
+    
+    // Dynamic API key management
+    customApiKeys: {}, // { keyName: { name, value, description } }
+    newApiKeyName: '',
+    newApiKeyValue: '',
+    newApiKeyDescription: '',
+    showAddApiKeyForm: false,
 
     // Chat state
     messages: [], // Array of { type: 'user'|'assistant', content: string, timestamp: Date, tools?: array, curl?: string, loading?: boolean }
@@ -35,6 +42,10 @@ export default function mcpNavApp() {
         
         const storedParallelKey = localStorage.getItem('parallel_api_key');
         if (storedParallelKey) this.parallelApiKey = storedParallelKey;
+        
+        // Load custom API keys
+        const storedCustomKeys = localStorage.getItem('custom_api_keys');
+        if (storedCustomKeys) this.customApiKeys = JSON.parse(storedCustomKeys);
       } catch (_) {}
       
       await this.checkServerKeys();
@@ -97,6 +108,117 @@ export default function mcpNavApp() {
     clearParallelApiKey() { 
       this.parallelApiKey = ''; 
       try { localStorage.removeItem('parallel_api_key'); } catch (_) {} 
+    },
+    
+    // Custom API key management
+    addCustomApiKey() {
+      if (this.newApiKeyName && this.newApiKeyValue) {
+        this.customApiKeys[this.newApiKeyName] = {
+          name: this.newApiKeyName,
+          value: this.newApiKeyValue.trim(),
+          description: this.newApiKeyDescription || `API key for ${this.newApiKeyName}`
+        };
+        this.saveCustomApiKeys();
+        this.resetAddApiKeyForm();
+      }
+    },
+    
+    removeCustomApiKey(keyName) {
+      delete this.customApiKeys[keyName];
+      this.saveCustomApiKeys();
+    },
+    
+    saveCustomApiKeys() {
+      try {
+        localStorage.setItem('custom_api_keys', JSON.stringify(this.customApiKeys));
+      } catch (_) {}
+    },
+    
+    resetAddApiKeyForm() {
+      this.newApiKeyName = '';
+      this.newApiKeyValue = '';
+      this.newApiKeyDescription = '';
+      this.showAddApiKeyForm = false;
+    },
+    
+    toggleAddApiKeyForm() {
+      this.showAddApiKeyForm = !this.showAddApiKeyForm;
+      if (!this.showAddApiKeyForm) {
+        this.resetAddApiKeyForm();
+      }
+    },
+    
+    maskedCustomKey(key) {
+      if (!key || key.length < 8) return key;
+      return key.substring(0, 4) + '*'.repeat(Math.max(0, key.length - 8)) + key.substring(key.length - 4);
+    },
+    
+    // Build tool headers from all available API keys
+    buildToolHeaders() {
+      const headers = {};
+      
+      // Add parallel API key if available
+      if (this.parallelApiKey) {
+        headers["parallel_web_search"] = {
+          "x-api-key": this.parallelApiKey
+        };
+      }
+      
+      // Add custom API keys - map them to potential tool names
+      Object.entries(this.customApiKeys).forEach(([keyName, keyData]) => {
+        const keyLower = keyName.toLowerCase();
+        const cleanKeyName = keyLower.replace(/[^a-z0-9]/g, '_');
+        
+        // Support common header formats based on service type
+        let headerConfig;
+        if (keyLower.includes('github')) {
+          headerConfig = { "Authorization": `Bearer ${keyData.value}` };
+        } else if (keyLower.includes('hugging') || keyLower.includes('hf')) {
+          headerConfig = { "Authorization": `Bearer ${keyData.value}` };
+        } else if (keyLower.includes('openai') || keyLower.includes('gpt')) {
+          headerConfig = { "Authorization": `Bearer ${keyData.value}` };
+        } else if (keyLower.includes('anthropic') || keyLower.includes('claude')) {
+          headerConfig = { "x-api-key": keyData.value };
+        } else if (keyLower.includes('google') || keyLower.includes('gemini')) {
+          headerConfig = { "Authorization": `Bearer ${keyData.value}` };
+        } else if (keyLower.includes('parallel') || keyLower.includes('search')) {
+          headerConfig = { "x-api-key": keyData.value };
+        } else {
+          // Default to x-api-key header format
+          headerConfig = { "x-api-key": keyData.value };
+        }
+        
+        // Add mappings for various potential tool name formats
+        const possibleToolNames = [
+          keyName,                    // Exact key name
+          cleanKeyName,              // Cleaned key name
+          keyLower,                  // Lowercase
+          keyName.replace(/[-_]/g, ''), // No separators
+          keyLower.replace(/[-_]/g, ''), // No separators lowercase
+        ];
+        
+        // Add specific mappings for known services
+        if (keyLower.includes('github')) {
+          possibleToolNames.push('github', 'com.github.copilot', 'github_operations');
+        } else if (keyLower.includes('hugging') || keyLower.includes('hf')) {
+          possibleToolNames.push('huggingface', 'hf', 'hugging_face');
+        } else if (keyLower.includes('parallel')) {
+          possibleToolNames.push('parallel_web_search', 'parallel', 'web_search');
+        } else if (keyLower.includes('gmail') || keyLower.includes('google')) {
+          possibleToolNames.push('gmail', 'ai.waystation/gmail', 'google');
+        } else if (keyLower.includes('apple')) {
+          possibleToolNames.push('com.apple-rag/mcp-server', 'apple_docs');
+        }
+        
+        // Apply the header config to all possible tool names
+        possibleToolNames.forEach(toolName => {
+          if (toolName && toolName.trim()) {
+            headers[toolName.trim()] = headerConfig;
+          }
+        });
+      });
+      
+      return headers;
     },
     
     toggleApiKeyPanel() {
@@ -292,11 +414,7 @@ export default function mcpNavApp() {
             mode: 'curl',
             model: this.selectedModel,
             conversation_history: this.messages.slice(-10), // Send last 10 messages for context
-            toolHeaders: this.parallelApiKey ? {
-              "parallel_web_search": {
-                "x-api-key": this.parallelApiKey
-              }
-            } : {}
+            toolHeaders: this.buildToolHeaders()
           })
         });
 
@@ -395,11 +513,7 @@ console.log(response);`;
             mode: 'execute',
             model: this.selectedModel,
             conversation_history: this.messages.slice(-10), // Send last 10 messages for context
-            toolHeaders: this.parallelApiKey ? {
-              "parallel_web_search": {
-                "x-api-key": this.parallelApiKey
-              }
-            } : {}
+            toolHeaders: this.buildToolHeaders()
           })
         });
 
@@ -578,12 +692,30 @@ console.log(response);`;
           return '      ' + line;
         }).join('\n');
       } else {
+        // Try to extract tool info from the result for fallback
+        let toolUrl = 'https://your-mcp-server.com/mcp';
+        let toolLabel = 'Custom MCP Server';
+        
+        if (result.selected_tools && result.selected_tools.length > 0) {
+          const firstTool = result.selected_tools[0];
+          // Check if the tool name is a URL
+          if (firstTool.name && (firstTool.name.startsWith('http://') || firstTool.name.startsWith('https://'))) {
+            toolUrl = firstTool.name;
+            try {
+              const urlObj = new URL(toolUrl);
+              toolLabel = `Custom MCP Server (${urlObj.hostname})`;
+            } catch (e) {
+              // Keep default label if URL parsing fails
+            }
+          }
+        }
+        
         // Fallback to placeholder if no actual config available
         toolsJson = `[
         {
           "type": "mcp",
-          "server_label": "tool_name",
-          "server_url": "tool_url",
+          "server_label": "${toolLabel}",
+          "server_url": "${toolUrl}",
           "headers": {},
           "require_approval": "never"
         }
@@ -603,10 +735,27 @@ console.log(response);`;
 
     // Sanitize curl commands to replace API keys with placeholders
     sanitizeCurlCommand(curlCommand) {
-      // Replace common API key patterns with placeholders
-      return curlCommand
-        .replace(/"x-api-key":\s*"[^"]+"/g, '"x-api-key": "<PARALLEL_API_KEY>"')
-        .replace(/"Authorization":\s*"Bearer [^"]+"/g, '"Authorization": "Bearer <GITHUB_TOKEN>"')
+      let sanitized = curlCommand;
+      
+      // Replace actual API key values with placeholders based on custom keys
+      Object.entries(this.customApiKeys).forEach(([keyName, keyData]) => {
+        const keyValue = keyData.value;
+        if (keyValue && keyValue.length > 10) {
+          // Replace the actual key value with a descriptive placeholder
+          const placeholder = `<${keyName.toUpperCase()}_API_KEY>`;
+          sanitized = sanitized.replace(new RegExp(escapeRegExp(keyValue), 'g'), placeholder);
+        }
+      });
+      
+      // Replace parallel API key if present
+      if (this.parallelApiKey) {
+        sanitized = sanitized.replace(new RegExp(escapeRegExp(this.parallelApiKey), 'g'), '<PARALLEL_API_KEY>');
+      }
+      
+      // Replace common API key patterns with generic placeholders
+      return sanitized
+        .replace(/"x-api-key":\s*"[^"]+"/g, '"x-api-key": "<API_KEY>"')
+        .replace(/"Authorization":\s*"Bearer [^"]+"/g, '"Authorization": "Bearer <API_TOKEN>"')
         .replace(/"authorization":\s*"Bearer [^"]+"/g, '"authorization": "Bearer <API_TOKEN>"')
         .replace(/Bearer [a-zA-Z0-9_-]{20,}/g, 'Bearer <API_TOKEN>')
         .replace(/"[a-zA-Z0-9_-]{30,}"/g, (match) => {
@@ -616,6 +765,11 @@ console.log(response);`;
           }
           return match;
         });
+      
+      // Helper function to escape regex special characters
+      function escapeRegExp(string) {
+        return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      }
     },
 
     // Generate a basic curl example when routing fails
