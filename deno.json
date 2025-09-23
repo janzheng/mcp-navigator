@@ -1,6 +1,9 @@
 {
+  "name": "mcp-navigator",
   "tasks": {
-    "serve": "deno serve --allow-sys --allow-read --allow-import --allow-env --allow-write --allow-net --reload=https://esm.town ./main.js"
+    "serve": "deno serve --allow-sys --allow-read --allow-import --allow-env --allow-write --allow-net --reload=https://esm.town ./main.js",
+    "deploy": "deployctl deploy --project=mcp-navigator ./main.js",
+    "prod": "deployctl deploy --prod --project=mcp-navigator ./main.js"
   },
   "$schema": "https://raw.githubusercontent.com/denoland/deno/348900b8b79f4a434cab4c74b3bc8d4d2fa8ee74/cli/schemas/config-file.v1.json",
   "lock": false,
@@ -36,5 +39,8 @@
     "unstable-temporal": true,
     "unstable-worker-options": true,
     "unstable-sloppy-imports": true
+  },
+  "deploy": {
+    "project": "mcp-navigator"
   }
 }

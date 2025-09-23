@@ -284,7 +284,7 @@ export async function handleToolListing(toolsParam, model, apiKey, userToolHeade
 }
 
 // Execute selected tools
-export async function executeSelectedTools(selectedTools, apiKey, model) {
+export async function executeSelectedTools(selectedTools, apiKey, model, toolHeaders = {}) {
   const toolNames = selectedTools.selected_tools?.map(t => t.name) || [];
   const query = selectedTools.execution_query || 'Execute selected tools';
   
@@ -322,7 +322,7 @@ export async function executeSelectedTools(selectedTools, apiKey, model) {
   }
 
   // Use existing handleToolExecution function
-  const result = await handleToolExecution(toolNames.join(','), query, model, apiKey, {});
+  const result = await handleToolExecution(toolNames.join(','), query, model, apiKey, toolHeaders);
   
   return {
     mode: 'execute',
@@ -331,13 +331,74 @@ export async function executeSelectedTools(selectedTools, apiKey, model) {
     tool_names: toolNames,
     tools_config: tools, // Include actual tool configurations
     result: result.error ? result.response : result.response,
-    error: result.error ? result.response : null // Pass error info to frontend
+    error: result.error ? result.response : null, // Pass error info to frontend
+    used_tool_headers: Object.keys(toolHeaders).length > 0 ? Object.keys(toolHeaders) : null
   };
 }
 
+// Function to extract API keys from user messages
+function extractApiKeysFromMessage(userQuery) {
+  const extractedKeys = {};
+  
+  // Patterns to match API keys in user messages
+  const patterns = [
+    // "use api key sk-xxx for github"
+    /(?:use|with)\s+(?:api\s*key|key)\s+([a-zA-Z0-9_\-]+)\s+for\s+([a-zA-Z0-9._\/-]+)/gi,
+    // "github api key: sk-xxx" 
+    /([a-zA-Z0-9._\/-]+)\s+(?:api\s*key|key):\s*([a-zA-Z0-9_\-]+)/gi,
+    // "api key sk-xxx for gmail"
+    /(?:api\s*key|key)\s+([a-zA-Z0-9_\-]+)\s+for\s+([a-zA-Z0-9._\/-]+)/gi,
+    // Generic bearer token patterns
+    /(?:bearer|token):\s*([a-zA-Z0-9_\-\.]+)/gi,
+    // Authorization header patterns
+    /authorization:\s*bearer\s+([a-zA-Z0-9_\-\.]+)/gi
+  ];
+  
+  patterns.forEach(pattern => {
+    let match;
+    while ((match = pattern.exec(userQuery)) !== null) {
+      if (match.length >= 3) {
+        // Format: tool -> key
+        const tool = match[2].toLowerCase();
+        const key = match[1];
+        extractedKeys[tool] = { "Authorization": `Bearer ${key}` };
+      } else if (match.length >= 2) {
+        // Generic key
+        const key = match[1];
+        extractedKeys["default"] = { "Authorization": `Bearer ${key}` };
+      }
+    }
+  });
+  
+  return extractedKeys;
+}
+
 // AI-powered tool selection function
-export async function aiToolSelection(userQuery, mode, apiKey, model, conversationHistory = []) {
+export async function aiToolSelection(userQuery, mode, apiKey, model, conversationHistory = [], toolHeaders = {}) {
   try {
+    // Extract API keys from user message
+    const extractedKeys = extractApiKeysFromMessage(userQuery);
+    
+    // Merge extracted keys with provided toolHeaders (user provided takes precedence)
+    const mergedToolHeaders = { ...extractedKeys, ...toolHeaders };
+    
+    // Clean the user query by removing API key information for processing
+    let cleanedQuery = userQuery;
+    const apiKeyPatterns = [
+      /(?:use|with)\s+(?:api\s*key|key)\s+[a-zA-Z0-9_\-]+\s+for\s+[a-zA-Z0-9._\/-]+/gi,
+      /[a-zA-Z0-9._\/-]+\s+(?:api\s*key|key):\s*[a-zA-Z0-9_\-]+/gi,
+      /(?:api\s*key|key)\s+[a-zA-Z0-9_\-]+\s+for\s+[a-zA-Z0-9._\/-]+/gi,
+      /(?:bearer|token):\s*[a-zA-Z0-9_\-\.]+/gi,
+      /authorization:\s*bearer\s+[a-zA-Z0-9_\-\.]+/gi
+    ];
+    
+    apiKeyPatterns.forEach(pattern => {
+      cleanedQuery = cleanedQuery.replace(pattern, '').trim();
+    });
+    
+    if (Object.keys(extractedKeys).length > 0) {
+      console.log(`Extracted API keys for tools:`, Object.keys(extractedKeys));
+    }
     // Get local registry context - use hardcoded schemas for known tools to avoid unnecessary API calls
     const localRegistry = [];
     for (const toolName of Object.keys(toolsRegistry)) {
@@ -407,6 +468,51 @@ export async function aiToolSelection(userQuery, mode, apiKey, model, conversati
     const routingDecision = await llmRouter(userQuery, apiKey, model, conversationHistory);
 
     if (routingDecision.type === 'introspection') {
+      // Check if user is asking about a specific MCP server's tools
+      const specificServerMatch = userQuery.match(/(?:tools?|available|what|list).*(?:for|from|in|of)\s+([a-zA-Z0-9._\/-]+(?:mcp|server))/i) ||
+                                  userQuery.match(/([a-zA-Z0-9._\/-]+(?:mcp|server)).*(?:tools?|available|what|functions)/i) ||
+                                  userQuery.match(/(garden\.stanislav\.svelte-llm\/svelte-llm-mcp|ai\.waystation\/gmail|com\.apple-rag\/mcp-server|com\.biodnd\/agent-ip)/i);
+      
+      if (specificServerMatch) {
+        const serverName = specificServerMatch[1];
+        console.log(`Detected specific MCP server query: "${serverName}"`);
+        
+        try {
+          // Make actual API call to list tools from the specific server
+          const toolListingResult = await handleToolListing(serverName, model, apiKey);
+          
+          if (!toolListingResult.error && toolListingResult.response.schemas?.length > 0) {
+            const schema = toolListingResult.response.schemas[0];
+            
+            if (schema.tools && schema.tools.length > 0) {
+              // Format the actual tools discovered from the MCP server
+              const toolsTable = schema.tools.map(tool => 
+                `**${tool.name}**: ${tool.description || 'No description available'}`
+              ).join('\n');
+              
+              return {
+                introspection: true,
+                response: `Here are the actual tools available from **${schema.server_label || serverName}**:\n\n${toolsTable}\n\n**Total tools:** ${schema.tool_count}\n**Source:** ${schema.source}\n\nThese tools were discovered by making a live API call to the MCP server.`,
+                specific_server: serverName,
+                discovered_tools: schema.tools,
+                tool_count: schema.tool_count
+              };
+            } else if (schema.status === 'inaccessible') {
+              return {
+                introspection: true,
+                response: `The MCP server **${serverName}** is currently inaccessible: ${schema.reason}\n\nThis means the server is configured but may need proper API keys or authentication to list its tools.`,
+                specific_server: serverName,
+                status: 'inaccessible',
+                reason: schema.reason
+              };
+            }
+          }
+        } catch (error) {
+          console.warn(`Failed to get tools for ${serverName}:`, error.message);
+          // Fall back to general introspection below
+        }
+      }
+      
       // Handle introspection queries by having AI respond conversationally about available tools/models
       const availableModels = [
         "openai/gpt-oss-120b", 
@@ -442,8 +548,8 @@ ${availableModels.map(model => `- ${model}`).join('\n')}
 LOCAL REGISTRY TOOLS:
 ${localRegistry.map(tool => `- ${tool.name}: ${tool.description} (Use cases: ${tool.use_cases.join(', ') || 'General purpose'}) [${tool.function_count} functions: ${tool.available_functions.join(', ')}]`).join('\n')}
 
-PUBLIC REGISTRY TOOLS (currently loaded):
-${publicRegistry.map(tool => `- ${tool.name}: ${tool.description}`).join('\n')}
+PUBLIC REGISTRY TOOLS:
+${publicRegistry.map(tool => `${tool.name}: ${tool.description}`).join('\n')}
 
 SYSTEM INFORMATION:
 - This system can use any tool from the local registry or public MCP registry automatically
@@ -452,7 +558,18 @@ SYSTEM INFORMATION:
 - Public registry tools work without additional setup
 - ALL tools listed above are available MCP tools, regardless of their naming convention
 
-IMPORTANT: When asked to list tools, show ALL tools from both local and public registries. Don't filter by name patterns - every tool listed above is an MCP tool that users can access. Be comprehensive and include everything you can see.`;
+FORMATTING INSTRUCTIONS: When listing tools, use this exact format:
+
+**Available Models:**
+[List models with dashes]
+
+**Local Registry Tools:**
+[List with descriptions and use cases]
+
+**Public Registry Tools:**
+[List in format: tool.name: description (no dashes)]
+
+IMPORTANT: When asked to list tools, ALWAYS show ALL tools from both local and public registries in the clean format above. Don't filter by name patterns - every tool listed above is an MCP tool that users can access. Be comprehensive and include everything you can see.`;
 
       // Get AI response about the tools/models
       const introspectionResponse = await groqResponses(apiKey, model, introspectionPrompt, []);
@@ -592,7 +709,7 @@ IMPORTANT: When asked to list tools, show ALL tools from both local and public r
 
     const selectionPrompt = `You are an AI assistant that helps users select the most appropriate MCP (Model Context Protocol) tools for their queries.${conversationContext}
 
-CURRENT USER QUERY: "${userQuery}"
+CURRENT USER QUERY: "${cleanedQuery}"
 
 AVAILABLE TOOLS:
 
@@ -677,8 +794,8 @@ Be concise and practical. Choose tools that can actually help answer the user's 
       // Generate curl command
       return await generateCurlCommand(selectedTools, apiKey, model);
     } else {
-      // Execute the selected tools
-      return await executeSelectedTools(selectedTools, apiKey, model);
+      // Execute the selected tools with merged headers (extracted + provided)
+      return await executeSelectedTools(selectedTools, apiKey, model, mergedToolHeaders);
     }
 
   } catch (error) {

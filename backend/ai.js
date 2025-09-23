@@ -27,6 +27,10 @@ AVAILABLE RESPONSE TYPES:
 
 EXAMPLES:
 - "show all tools" → introspection
+- "what tools are available in garden.stanislav.svelte-llm/svelte-llm-mcp" → introspection
+- "list tools from ai.waystation/gmail MCP server" → introspection  
+- "what functions does com.apple-rag/mcp-server have" → introspection
+- "tools available for garden.stanislav.svelte-llm/svelte-llm-mcp" → introspection
 - "how do I use git?" → direct_response
 - "what's the weather today?" → tool_execution
 - "explain machine learning" → direct_response

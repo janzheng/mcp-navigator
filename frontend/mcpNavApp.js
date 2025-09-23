@@ -2,8 +2,12 @@ export default function mcpNavApp() {
   const inst = {
     // API key management
     hasServerKey: true,
-    userApiKey: '',
+    hasServerParallelKey: false,
+    userApiKey: '', // Groq API key
+    parallelApiKey: '', // Parallel API key
     apiKeyInput: '',
+    parallelKeyInput: '',
+    showApiKeyPanel: false,
 
     // Chat state
     messages: [], // Array of { type: 'user'|'assistant', content: string, timestamp: Date, tools?: array, curl?: string, loading?: boolean }
@@ -24,13 +28,16 @@ export default function mcpNavApp() {
     ],
 
     async init() {
-      // Load API key from localStorage
+      // Load API keys from localStorage
       try {
-        const storedApiKey = localStorage.getItem('groq_api_key');
-        if (storedApiKey) this.userApiKey = storedApiKey;
+        const storedGroqKey = localStorage.getItem('groq_api_key');
+        if (storedGroqKey) this.userApiKey = storedGroqKey;
+        
+        const storedParallelKey = localStorage.getItem('parallel_api_key');
+        if (storedParallelKey) this.parallelApiKey = storedParallelKey;
       } catch (_) {}
       
-      await this.checkServerKey();
+      await this.checkServerKeys();
       
       // Load chat history from localStorage
       try {
@@ -53,16 +60,20 @@ export default function mcpNavApp() {
       } catch (_) {}
     },
 
-    async checkServerKey() {
+    async checkServerKeys() {
       try {
         const r = await fetch('/api/debug');
         const j = await r.json();
         this.hasServerKey = !!j.environment?.GROQ_API_KEY?.includes('Available');
-      } catch (_) { this.hasServerKey = false; }
+        this.hasServerParallelKey = !!j.environment?.PARALLEL_API_KEY?.includes('Available');
+      } catch (_) { 
+        this.hasServerKey = false; 
+        this.hasServerParallelKey = false;
+      }
     },
 
     // API Key management
-    setApiKey() {
+    setGroqApiKey() {
       if (this.apiKeyInput && this.apiKeyInput.trim()) {
         this.userApiKey = this.apiKeyInput.trim();
         try { localStorage.setItem('groq_api_key', this.userApiKey); } catch (_) {}
@@ -70,17 +81,86 @@ export default function mcpNavApp() {
       }
     },
     
-    changeApiKey() { this.userApiKey = ''; },
+    setParallelApiKey() {
+      if (this.parallelKeyInput && this.parallelKeyInput.trim()) {
+        this.parallelApiKey = this.parallelKeyInput.trim();
+        try { localStorage.setItem('parallel_api_key', this.parallelApiKey); } catch (_) {}
+        this.parallelKeyInput = '';
+      }
+    },
     
-    clearApiKey() { 
+    clearGroqApiKey() { 
       this.userApiKey = ''; 
       try { localStorage.removeItem('groq_api_key'); } catch (_) {} 
     },
     
-    get maskedApiKey() {
+    clearParallelApiKey() { 
+      this.parallelApiKey = ''; 
+      try { localStorage.removeItem('parallel_api_key'); } catch (_) {} 
+    },
+    
+    toggleApiKeyPanel() {
+      this.showApiKeyPanel = !this.showApiKeyPanel;
+    },
+    
+    get maskedGroqKey() {
       if (!this.userApiKey) return '';
       const k = this.userApiKey;
       return k.substring(0, 8) + '*'.repeat(Math.max(0, k.length - 12)) + k.substring(k.length - 4);
+    },
+    
+    get maskedParallelKey() {
+      if (!this.parallelApiKey) return '';
+      const k = this.parallelApiKey;
+      return k.substring(0, 8) + '*'.repeat(Math.max(0, k.length - 12)) + k.substring(k.length - 4);
+    },
+    
+    get apiKeyStatus() {
+      const groqStatus = this.userApiKey || this.hasServerKey;
+      const parallelStatus = this.parallelApiKey || this.hasServerParallelKey;
+      return { groq: groqStatus, parallel: parallelStatus };
+    },
+
+    // Enhanced error handling for API key issues
+    handleApiError(response, errorText) {
+      const status = response.status;
+      let errorMessage = errorText;
+      let suggestions = [];
+
+      // Parse JSON error if possible
+      try {
+        const errorJson = JSON.parse(errorText);
+        errorMessage = errorJson.error || errorText;
+      } catch (_) {}
+
+      if (status === 401 || errorMessage.toLowerCase().includes('api key') || errorMessage.toLowerCase().includes('authentication')) {
+        suggestions.push("🔑 **API Key Issue Detected**");
+        
+        if (!this.userApiKey && !this.hasServerKey) {
+          suggestions.push("• Add your Groq API key using the 'Manage' button above");
+        }
+        
+        if (errorMessage.toLowerCase().includes('parallel') && !this.parallelApiKey && !this.hasServerParallelKey) {
+          suggestions.push("• Add your Parallel API key for web search functionality");
+        }
+        
+        suggestions.push("• Check that your API keys are valid and have sufficient credits");
+        suggestions.push("• User-provided keys take priority over server keys");
+      } else if (status === 429) {
+        suggestions.push("⏰ **Rate Limit Exceeded**");
+        suggestions.push("• Wait a moment before making another request");
+        suggestions.push("• Consider upgrading your API plan for higher limits");
+      } else if (status >= 500) {
+        suggestions.push("🔧 **Server Error**");
+        suggestions.push("• This appears to be a temporary server issue");
+        suggestions.push("• Try again in a few moments");
+      }
+
+      return {
+        message: errorMessage,
+        suggestions,
+        showApiPanel: status === 401 || errorMessage.toLowerCase().includes('api key')
+      };
     },
 
     // Model selection
@@ -211,13 +291,29 @@ export default function mcpNavApp() {
             query: input,
             mode: 'curl',
             model: this.selectedModel,
-            conversation_history: this.messages.slice(-10) // Send last 10 messages for context
+            conversation_history: this.messages.slice(-10), // Send last 10 messages for context
+            toolHeaders: this.parallelApiKey ? {
+              "parallel_web_search": {
+                "x-api-key": this.parallelApiKey
+              }
+            } : {}
           })
         });
 
         if (!response.ok) {
           const errorText = await response.text();
-          throw new Error(`API Error: ${response.status} - ${errorText}`);
+          const errorInfo = this.handleApiError(response, errorText);
+          
+          if (errorInfo.showApiPanel) {
+            this.showApiKeyPanel = true;
+          }
+          
+          let fullError = errorInfo.message;
+          if (errorInfo.suggestions.length > 0) {
+            fullError += '\n\n' + errorInfo.suggestions.join('\n');
+          }
+          
+          throw new Error(fullError);
         }
 
         const result = await response.json();
@@ -298,13 +394,29 @@ console.log(response);`;
             query: input,
             mode: 'execute',
             model: this.selectedModel,
-            conversation_history: this.messages.slice(-10) // Send last 10 messages for context
+            conversation_history: this.messages.slice(-10), // Send last 10 messages for context
+            toolHeaders: this.parallelApiKey ? {
+              "parallel_web_search": {
+                "x-api-key": this.parallelApiKey
+              }
+            } : {}
           })
         });
 
         if (!response.ok) {
           const errorText = await response.text();
-          throw new Error(`API Error: ${response.status} - ${errorText}`);
+          const errorInfo = this.handleApiError(response, errorText);
+          
+          if (errorInfo.showApiPanel) {
+            this.showApiKeyPanel = true;
+          }
+          
+          let fullError = errorInfo.message;
+          if (errorInfo.suggestions.length > 0) {
+            fullError += '\n\n' + errorInfo.suggestions.join('\n');
+          }
+          
+          throw new Error(fullError);
         }
 
         const result = await response.json();

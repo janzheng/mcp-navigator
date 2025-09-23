@@ -28,6 +28,7 @@ app.post('/api/groq/responses', async (c) => {
     const m = authHeader.match(/^Bearer\s+(.+)$/i);
     const headerKey = m ? m[1].trim() : '';
     const apiKey = headerKey || body?.apiKey || Deno.env.get("GROQ_API_KEY");
+    console.log('[api/groq/responses] Groq apiKey', apiKey);
 
     if (!apiKey) {
       return c.json({ error: 'No Groq API key available.' }, 400);
@@ -265,6 +266,14 @@ app.get('/api/tools', async (c) => {
           searchRegistry: "/api/registry?search=gmail",
           mcpRegistryExample: "/api/tools?tools=garden.stanislav.svelte-llm/svelte-llm-mcp&q=what are svelte runes"
         },
+        mcpServerExamples: {
+          "List tools from Svelte LLM MCP": "/api/tools?tools=garden.stanislav.svelte-llm/svelte-llm-mcp&mode=list",
+          "List tools from Gmail MCP": "/api/tools?tools=ai.waystation/gmail&mode=list", 
+          "List tools from Apple Developer Docs MCP": "/api/tools?tools=com.apple-rag/mcp-server&mode=list",
+          "List tools from Patent Search MCP": "/api/tools?tools=com.biodnd/agent-ip&mode=list",
+          "List tools from multiple MCPs": "/api/tools?tools=ai.waystation/gmail,com.apple-rag/mcp-server&mode=list",
+          note: "These examples show how to list available tools from specific MCP servers"
+        },
         aiSelection: {
           executeGet: '/api/select?q=Plan a trip to Tokyo',
           curlGet: '/api/select?q=Find trending AI models&mode=curl',
@@ -427,7 +436,8 @@ app.post('/api/select', async (c) => {
       query, 
       mode = 'execute', // 'execute' or 'curl'
       model = "openai/gpt-oss-120b",
-      conversation_history = []
+      conversation_history = [],
+      toolHeaders = {}
     } = body;
 
     // Get Groq API key
@@ -452,7 +462,7 @@ app.post('/api/select', async (c) => {
       }, 400);
     }
 
-    const result = await aiToolSelection(query, mode, apiKey, model, conversation_history);
+    const result = await aiToolSelection(query, mode, apiKey, model, conversation_history, toolHeaders);
     return c.json(result);
     
   } catch (error) {
