@@ -272,7 +272,9 @@ app.get('/api/tools', async (c) => {
           "List tools from Apple Developer Docs MCP": "/api/tools?tools=com.apple-rag/mcp-server&mode=list",
           "List tools from Patent Search MCP": "/api/tools?tools=com.biodnd/agent-ip&mode=list",
           "List tools from multiple MCPs": "/api/tools?tools=ai.waystation/gmail,com.apple-rag/mcp-server&mode=list",
-          note: "These examples show how to list available tools from specific MCP servers"
+          "List tools from custom URL": "/api/tools?https://groq-remote-mcp.yawnxyz.workers.dev/mcp&mode=list",
+          "Execute with custom URL": "/api/tools?tools=https://your-mcp-server.com/api&q=your query here",
+          note: "These examples show how to list/use tools from specific MCP servers or custom URLs"
         },
         aiSelection: {
           executeGet: '/api/select?q=Plan a trip to Tokyo',

@@ -49,6 +49,39 @@ export async function discoverMcpTools(toolName, toolConfig, apiKey, model) {
   }
 }
 
+// Function to detect and create config from URL
+function createConfigFromUrl(url) {
+  try {
+    const urlObj = new URL(url);
+    const safeName = urlObj.hostname.replace(/[^a-zA-Z0-9]/g, '_') + '_custom';
+    
+    return {
+      type: "mcp",
+      server_label: `Custom MCP Server (${urlObj.hostname})`,
+      server_url: url,
+      headers: {},
+      require_approval: "never",
+      _meta: {
+        description: `Custom MCP server at ${urlObj.hostname}`,
+        source: 'dynamic_url'
+      }
+    };
+  } catch (error) {
+    console.warn('Invalid URL provided:', url);
+    return null;
+  }
+}
+
+// Function to detect if a tool parameter is a URL
+function isUrlTool(toolParam) {
+  try {
+    const url = new URL(toolParam);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 // Core function to handle tool lookup and execution
 export async function handleToolExecution(toolsParam, query, model, apiKey, userToolHeaders = {}) {
   if (!toolsParam) {
@@ -82,6 +115,16 @@ export async function handleToolExecution(toolsParam, query, model, apiKey, user
   for (const toolName of toolNames) {
     let toolConfig = toolsRegistry[toolName];
     let isFromMcpRegistry = false;
+    let isFromUrl = false;
+    
+    // Check if toolName is a URL
+    if (isUrlTool(toolName)) {
+      toolConfig = createConfigFromUrl(toolName);
+      if (toolConfig) {
+        isFromUrl = true;
+        console.log(`Created dynamic tool config from URL: ${toolName}`);
+      }
+    }
     
     if (!toolConfig) {
       // Try to find and load from MCP registry
@@ -101,9 +144,9 @@ export async function handleToolExecution(toolsParam, query, model, apiKey, user
         error: true, 
         status: 404,
         response: { 
-          error: `Tool '${toolName}' not found in local registry or MCP registry`,
+          error: `Tool '${toolName}' not found in local registry, MCP registry, or is not a valid URL`,
           availableTools: Object.keys(toolsRegistry),
-          suggestion: `Try searching the registry: /api/registry?search=${encodeURIComponent(toolName)}`
+          suggestion: `Try searching the registry: /api/registry?search=${encodeURIComponent(toolName)}, or provide a valid MCP server URL`
         }
       };
     }
@@ -170,6 +213,16 @@ export async function handleToolListing(toolsParam, model, apiKey, userToolHeade
   for (const toolName of toolNames) {
     let toolConfig = toolsRegistry[toolName];
     let isFromMcpRegistry = false;
+    let isFromUrl = false;
+    
+    // Check if toolName is a URL
+    if (isUrlTool(toolName)) {
+      toolConfig = createConfigFromUrl(toolName);
+      if (toolConfig) {
+        isFromUrl = true;
+        console.log(`Created dynamic tool config from URL for listing: ${toolName}`);
+      }
+    }
     
     if (!toolConfig) {
       // Try to find and load from MCP registry
@@ -189,9 +242,9 @@ export async function handleToolListing(toolsParam, model, apiKey, userToolHeade
         error: true, 
         status: 404,
         response: { 
-          error: `Tool '${toolName}' not found in local registry or MCP registry`,
+          error: `Tool '${toolName}' not found in local registry, MCP registry, or is not a valid URL`,
           availableTools: Object.keys(toolsRegistry),
-          suggestion: `Try searching the registry: /api/registry?search=${encodeURIComponent(toolName)}`
+          suggestion: `Try searching the registry: /api/registry?search=${encodeURIComponent(toolName)}, or provide a valid MCP server URL`
         }
       };
     }
@@ -221,7 +274,7 @@ export async function handleToolListing(toolsParam, model, apiKey, userToolHeade
           reason: `Missing API keys: ${missingKeys.join(', ')}`,
           tools: [],
           tool_count: 0,
-          source: isFromMcpRegistry ? 'mcp_registry' : 'local_registry',
+          source: isFromUrl ? 'dynamic_url' : (isFromMcpRegistry ? 'mcp_registry' : 'local_registry'),
           ...(isFromMcpRegistry && toolConfig._registry ? { registry_info: toolConfig._registry } : {})
         });
         continue;
@@ -242,7 +295,7 @@ export async function handleToolListing(toolsParam, model, apiKey, userToolHeade
           server_label: toolsList.server_label,
           tools: toolsList.tools,
           tool_count: toolsList.tools?.length || 0,
-          source: isFromMcpRegistry ? 'mcp_registry' : 'local_registry',
+          source: isFromUrl ? 'dynamic_url' : (isFromMcpRegistry ? 'mcp_registry' : 'local_registry'),
           ...(isFromMcpRegistry && toolConfig._registry ? { registry_info: toolConfig._registry } : {})
         });
       }
@@ -256,7 +309,7 @@ export async function handleToolListing(toolsParam, model, apiKey, userToolHeade
           reason: "Authentication failed - check API keys",
           tools: [],
           tool_count: 0,
-          source: isFromMcpRegistry ? 'mcp_registry' : 'local_registry',
+          source: isFromUrl ? 'dynamic_url' : (isFromMcpRegistry ? 'mcp_registry' : 'local_registry'),
           ...(isFromMcpRegistry && toolConfig._registry ? { registry_info: toolConfig._registry } : {})
         });
       } else {
@@ -267,7 +320,7 @@ export async function handleToolListing(toolsParam, model, apiKey, userToolHeade
           reason: `Failed to get schema: ${error.message}`,
           tools: [],
           tool_count: 0,
-          source: isFromMcpRegistry ? 'mcp_registry' : 'local_registry',
+          source: isFromUrl ? 'dynamic_url' : (isFromMcpRegistry ? 'mcp_registry' : 'local_registry'),
           ...(isFromMcpRegistry && toolConfig._registry ? { registry_info: toolConfig._registry } : {})
         });
       }
@@ -379,6 +432,19 @@ export async function aiToolSelection(userQuery, mode, apiKey, model, conversati
     // Extract API keys from user message
     const extractedKeys = extractApiKeysFromMessage(userQuery);
     
+    // Check if user provided a custom MCP server URL
+    const urlPattern = /https?:\/\/[^\s]+/gi;
+    const urlMatches = userQuery.match(urlPattern);
+    let customUrls = [];
+    
+    if (urlMatches) {
+      customUrls = urlMatches.filter(url => {
+        // Filter for URLs that look like MCP server endpoints
+        return url.includes('/sse') || url.includes('/mcp') || url.includes('api');
+      });
+      console.log('Detected custom MCP URLs:', customUrls);
+    }
+    
     // Merge extracted keys with provided toolHeaders (user provided takes precedence)
     const mergedToolHeaders = { ...extractedKeys, ...toolHeaders };
     
@@ -440,6 +506,27 @@ export async function aiToolSelection(userQuery, mode, apiKey, model, conversati
       };
       
       localRegistry.push(toolInfo);
+    }
+
+    // Add custom URLs as available tools if detected
+    if (customUrls.length > 0) {
+      customUrls.forEach(url => {
+        try {
+          const urlObj = new URL(url);
+          localRegistry.push({
+            name: url,
+            description: `Custom MCP server at ${urlObj.hostname}`,
+            use_cases: ['Custom operations'],
+            server_url: url,
+            hasRemote: true,
+            available_functions: ['custom_operations'],
+            function_count: 1,
+            source: 'dynamic_url'
+          });
+        } catch (error) {
+          console.warn('Invalid custom URL:', url);
+        }
+      });
     }
 
     // Get public registry context (filtered for relevant tools with remotes)
