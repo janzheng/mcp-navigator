@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MCP Navigator</title>
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://mcp-nav.val.run/">
+  <meta property="og:title" content="MCP Navigator — AI-powered Tool Selection">
+  <meta property="og:description" content="AI-powered tool selection and execution using Model Context Protocol with Groq.">
+  <!-- <meta property="og:image" content="https://imagedelivery.net/TysXuIP7qbyd6gh5m_zQIQ/1764955c-dd1f-4745-2aed-3b59717e3d00/medium"> -->
+
+  <!-- Twitter -->
+  <meta property="twitter:card" content="summary_large_image">
+  <meta property="twitter:url" content="https://mcp-nav.val.run/">
+  <meta property="twitter:title" content="MCP Navigator — AI-powered Tool Selection">
+  <meta property="twitter:description" content="AI-powered tool selection and execution using Model Context Protocol with Groq.">
+  <!-- <meta property="twitter:image" content="https://imagedelivery.net/TysXuIP7qbyd6gh5m_zQIQ/1764955c-dd1f-4745-2aed-3b59717e3d00/medium"> -->
+  <script>
+    // Ensure Alpine waits until our module registers the data store
+    window.deferLoadingAlpine = function (start) { window._startAlpine = start; };
+  </script>
+  <script type="module" src="frontend/init.js"></script>
+  <script src="https://unpkg.com/alpinejs@3.10.5/dist/cdn.min.js" defer></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/marked@9.1.6/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+
+  <style>
+    body, * {
+      font-family: 'Menlo', 'Monaco', 'Consolas', 'Liberation Mono', 'Courier New', monospace;
+    }
+    /* Global spacing for headings and lists (applies to rendered markdown too) */
+    h1, h2, h3, h4, h5, h6 { margin-top: 1.25rem; margin-bottom: 0.75rem; font-weight: 600; }
+    ul, ol { margin-top: 0.5rem; margin-bottom: 0.75rem; padding-left: 1.25rem; }
+    li { margin-bottom: 0.25rem; }
+    /* Table readability defaults */
+    table { width: auto; max-width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: 0.75rem; margin-bottom: 0.75rem; }
+    th, td { border: 1px solid #e5e7eb; padding: 0.4rem 0.5rem; text-align: left; vertical-align: top; word-break: break-word; overflow-wrap: anywhere; }
+    th, td { max-width: 60ch; }
+    .prose p {
+      margin-bottom: 0.75rem !important;
+    }
+    .prose h1, .prose h2, .prose h3, .prose h4, .prose h5, .prose h6 {
+      margin-top: 1.5rem !important;
+      margin-bottom: 0.75rem !important;
+      font-weight: 600 !important;
+    }
+    .prose h1 {
+      font-size: 1.875rem !important;
+      line-height: 2.25rem !important;
+    }
+    .prose h2 {
+      font-size: 1.5rem !important;
+      line-height: 2rem !important;
+    }
+    .prose h3 {
+      font-size: 1.25rem !important;
+      line-height: 1.75rem !important;
+    }
+    .prose h4 {
+      font-size: 1.125rem !important;
+      line-height: 1.75rem !important;
+    }
+    .prose ul, .prose ol {
+      margin-top: 0.75rem !important;
+      margin-bottom: 0.75rem !important;
+      padding-left: 1.5rem !important;
+    }
+    .prose li {
+      margin-bottom: 0.25rem !important;
+    }
+    .prose ul {
+      list-style-type: disc !important;
+    }
+    .prose ol {
+      list-style-type: decimal !important;
+    }
+    .prose blockquote {
+      margin-top: 1rem !important;
+      margin-bottom: 1rem !important;
+      padding-left: 1rem !important;
+      border-left: 4px solid #e5e7eb !important;
+      font-style: italic !important;
+    }
+    .prose strong {
+      font-weight: 600 !important;
+    }
+    .prose em {
+      font-style: italic !important;
+    }
+    .prose code {
+      background-color: #f3f4f6 !important;
+      padding: 0.125rem 0.25rem !important;
+      border-radius: 0.25rem !important;
+      font-size: 0.875em !important;
+    }
+    .prose pre {
+      background-color: #f3f4f6 !important;
+      padding: 1rem !important;
+      border-radius: 0.5rem !important;
+      overflow-x: auto !important;
+      margin-top: 0.75rem !important;
+      margin-bottom: 0.75rem !important;
+    }
+    .prose pre code {
+      background-color: transparent !important;
+      padding: 0 !important;
+    }
+    .prose a {
+      color: #2563eb !important;
+      text-decoration: underline !important;
+    }
+    .prose a:hover {
+      color: #1d4ed8 !important;
+    }
+    /* Force left-to-right typing and neutral punctuation behavior in editable email fields */
+    .ltr { direction: ltr; unicode-bidi: isolate; text-align: left; }
+    /* Hide empty badges to avoid empty gray box on pending */
+    .badge:empty { display: none; }
+    /* Prevent wrapping on table headers and selected cells */
+    thead th { white-space: nowrap; word-break: normal; overflow-wrap: normal; }
+    .nowrap { white-space: nowrap; word-break: normal; overflow-wrap: normal; }
+    .loading-spinner {
+      border: 4px solid rgba(0, 0, 0, 0.1);
+      border-left-color: #f59e0b;
+      border-radius: 50%;
+      width: 36px;
+      height: 36px;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .card-washed-shadow {
+      box-shadow:
+        0 2px 28px 0 rgba(60, 60, 60, 0.06),
+        0 8px 28px 0 rgba(60, 60, 60, 0.08),
+        0 16px 62px 0 rgba(60, 60, 60, 0.09);
+      border: 1px solid #fafafa;
+      padding: 6px;
+    }
+
+    .slide-up {
+      animation: slideUp 0.4s ease-out forwards;
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    @keyframes slideUp {
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    
+    /* Chat-specific styles */
+    .chat-container {
+      flex: 1;
+      overflow-y: auto;
+    }
+    
+    .chat-message {
+      margin-bottom: 1rem;
+      padding: 0.75rem;
+      border-radius: 0.5rem;
+    }
+    
+    .chat-message.user {
+      background-color: #e0f2fe;
+    }
+    
+    .chat-message.assistant {
+      background-color: #f3f4f6;
+      margin-right: 2rem;
+    }
+    
+    .chat-message.loading {
+      background-color: #fef3c7;
+    }
+    
+    .code-block {
+      background-color: #1f2937;
+      color: #f9fafb;
+      padding: 1rem;
+      border-radius: 0.5rem;
+      font-family: 'Courier New', monospace;
+      overflow-x: auto;
+      font-size: 0.875rem;
+      white-space: pre-wrap;
+      word-break: break-all;
+      margin: 0;
+      max-width: 100%;
+    }
+    
+    .code-block code {
+      background-color: transparent !important;
+      padding: 0 !important;
+      border-radius: 0 !important;
+      color: inherit !important;
+      font-size: inherit !important;
+    }
+    
+    .input-container {
+      padding: 1rem;
+    }
+    
+    .chat-input {
+      resize: none;
+      min-height: 2.5rem;
+      max-height: 8rem;
+    }
+  </style>
+</head>
+<body class="bg-gray-100 h-screen flex flex-col">
+  <div x-data="mcpNavApp()" class="flex h-full flex-col">
+    
+    <!-- Header -->
+    <header class="bg-white border-b px-4 py-4">
+      <div class="max-w-4xl mx-auto">
+        <div class="flex items-center justify-between mb-4">
+          <div class="text-center flex-1">
+            <h1 class="text-2xl font-bold text-gray-800 mb-1" x-text="i18n.title"></h1>
+            <p class="text-sm text-gray-600" x-text="i18n.subtitle"></p>
+            <p class="text-xs text-gray-500 mt-1">
+              Powered by <a href="https://console.groq.com/docs/mcp" target="_blank" rel="noopener noreferrer" class="underline hover:text-gray-700">Groq's Remote MCP API</a> - connecting AI to external tools and data
+            </p>
+        </div>
+        </div>
+
+    <!-- API Key Input (shown when no server key) -->
+        <div x-show="!hasServerKey && !userApiKey" class="mb-4">
+      <div class="flex gap-2 items-center">
+        <input 
+          type="password"
+          x-model="apiKeyInput"
+          placeholder="Enter your Groq API key..."
+              class="flex-1 px-3 py-2 text-sm rounded-md focus:ring-2 focus:ring-blue-400 focus:border-transparent border border-gray-300">
+        <button 
+          type="button"
+          @click="setApiKey()"
+          :disabled="!apiKeyInput.trim()"
+          class="px-3 py-2 bg-blue-500 text-white text-sm rounded-md hover:bg-blue-600 disabled:opacity-50">
+          Set Key
+        </button>
+      </div>
+      <p class="text-xs text-gray-600 mt-2 text-center">
+        <a href="https://console.groq.com/keys" target="_blank" class="underline hover:text-gray-800" x-text="i18n.getKeyHere"></a>
+      </p>
+    </div>
+
+    <!-- API Key Status (shown when user key is set) -->
+        <div x-show="!hasServerKey && userApiKey" class="mb-4">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center">
+          <span class="text-sm text-gray-700" x-text="i18n.apiKey"></span>
+          <code class="text-xs text-gray-600 ml-1" x-text="maskedApiKey"></code>
+        </div>
+        <div class="flex gap-2">
+          <button 
+            type="button"
+            @click="changeApiKey()"
+            class="text-xs text-gray-600 hover:text-gray-800 underline">
+            <span x-text="i18n.change"></span>
+          </button>
+          <button 
+            type="button"
+            @click="clearApiKey()"
+            class="text-xs text-gray-600 hover:text-gray-800 underline">
+            <span x-text="i18n.clear"></span>
+          </button>
+        </div>
+      </div>
+    </div>
+    
+        <!-- Model Selection and Controls -->
+        <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+            <label class="text-sm text-gray-700" x-text="i18n.model"></label>
+            <select x-model="selectedModel" @change="setModel(selectedModel)" class="text-sm px-2 py-1 border border-gray-300 rounded-md">
+              <template x-for="model in availableModels" :key="model">
+                <option :value="model" x-text="model"></option>
+              </template>
+            </select>
+          </div>
+          <button
+            type="button"
+            @click="clearChat()" 
+            class="text-sm px-3 py-1 border border-gray-300 rounded-md hover:bg-gray-50">
+            <span x-text="i18n.clearChat"></span>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Chat Area -->
+    <main class="flex-1 flex flex-col min-h-0">
+      <div class="chat-container p-4">
+        <div class="max-w-4xl mx-auto">
+          
+          <!-- Welcome Message -->
+          <div x-show="messages.length === 0" class="text-center py-12">
+            <div class="mb-6">
+              <h2 class="text-xl font-semibold text-gray-700 mb-2">Welcome to MCP Navigator</h2>
+              <p class="text-gray-600 mb-4">Ask me anything and I'll automatically select the best tools to help you.</p>
+              <p class="text-xs text-gray-500 mb-4">
+                Public MCPs are sourced from the official <a href="https://github.com/modelcontextprotocol/registry" target="_blank" rel="noopener noreferrer" class="underline hover:text-gray-700">MCP Registry</a> and provide remote hosted access.
+              </p>
+              <div class="text-sm text-gray-500">
+                <p class="mb-2">Examples:</p>
+                <ul class="space-y-1">
+                  <li><button type="button" @click="tryExample('List all available tools and models')" class="text-blue-600 hover:text-blue-800 underline cursor-pointer">"List all available tools and models"</button></li>
+                  <li><button type="button" @click="tryExample('What\'s the weather in San Francisco?')" class="text-blue-600 hover:text-blue-800 underline cursor-pointer">"What's the weather in San Francisco?"</button></li>
+                  <li><button type="button" @click="tryExample('Find trending AI models on Hugging Face')" class="text-blue-600 hover:text-blue-800 underline cursor-pointer">"Find trending AI models on Hugging Face"</button></li>
+                  <li><button type="button" @click="tryExample('Show me how to use the GitHub MCP tool')" class="text-blue-600 hover:text-blue-800 underline cursor-pointer">"Show me how to use the GitHub MCP tool"</button></li>
+                  <li><button type="button" @click="tryExample('Generate a huggingface mcp curl example')" class="text-blue-600 hover:text-blue-800 underline cursor-pointer">"Generate a huggingface mcp curl example"</button></li>
+                </ul>
+        </div>
+            </div>
+          </div>
+
+          <!-- Chat Messages -->
+          <div class="space-y-4">
+            <template x-for="(message, index) in messages" :key="index">
+              <div class="chat-message" :class="[message.type, { 'loading': message.loading }]">
+                
+                <!-- User Message -->
+                <div x-show="message.type === 'user'" class="flex items-start gap-3">
+                  <div class="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white text-sm font-bold">
+                    U
+        </div>
+                  <div class="flex-1">
+                    <div class="font-medium text-gray-800 mb-1">You</div>
+                    <div class="text-gray-700 whitespace-pre-wrap" x-text="message.content"></div>
+                    <div class="text-xs text-gray-500 mt-2" x-text="formatTimestamp(message.timestamp)"></div>
+      </div>
+    </div>
+    
+                <!-- Assistant Message -->
+                <div x-show="message.type === 'assistant'" class="flex items-start gap-3">
+                  <div class="min-w-8 min-h-8 rounded-full bg-gray-600 flex items-center justify-center text-white text-sm font-bold">
+                    AI
+        </div>
+                  <div class="flex-1">
+                    <div class="font-medium text-gray-800 mb-1">Assistant</div>
+                    
+                    <!-- Loading state -->
+                    <div x-show="message.loading" class="flex items-center gap-2 text-gray-600">
+                      <div class="loading-spinner w-4 h-4"></div>
+                      <span>Processing...</span>
+          </div>
+
+                    <!-- Message content -->
+                    <div x-show="!message.loading" class="space-y-3">
+                      <div class="text-gray-700 prose prose-sm max-w-none" x-html="message.content ? DOMPurify.sanitize(marked.parse(message.content)) : ''"></div>
+                      
+                      <!-- Tools used -->
+                      <div x-show="message.tools && message.tools.length > 0" class="mt-3">
+                        <div class="text-xs text-gray-600 mb-2">Tools used:</div>
+                        <div class="flex flex-wrap gap-2">
+                          <template x-for="tool in message.tools" :key="tool.name || tool">
+                            <span class="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-md" x-text="tool.name || tool"></span>
+                          </template>
+                        </div>
+                      </div>
+
+                      <!-- Curl command -->
+                      <div x-show="message.curl && message.curl.trim()" class="mt-3">
+                        <div class="flex items-center justify-between mb-2">
+                          <div class="text-xs text-gray-600">Curl command:</div>
+                          <button 
+                            type="button" 
+                            @click="copyToClipboard(message.curl)"
+                            class="text-xs px-2 py-1 bg-gray-800 text-white rounded hover:bg-gray-700">
+                            <span x-text="i18n.copy"></span>
+                          </button>
+                        </div>
+                        <pre class="code-block"><code x-text="message.curl"></code></pre>
+                      </div>
+                      
+                      <div class="text-xs text-gray-500 mt-2" x-text="formatTimestamp(message.timestamp)"></div>
+                    </div>
+                  </div>
+                </div>
+                    </div>
+              </template>
+          </div>
+        </div>
+      </div>
+
+      <!-- Input Area -->
+      <div class="flex-shrink-0 input-container bg-white border-t">
+        <div class="max-w-4xl mx-auto">
+          <div class="flex gap-3">
+            <textarea 
+              x-model="currentInput"
+              @keydown="handleKeyDown($event)"
+              :disabled="isProcessing"
+              :placeholder="i18n.placeholder"
+              class="flex-1 chat-input px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+              rows="1"></textarea>
+            <button 
+              type="button"
+              @click="sendMessage()"
+              :disabled="isProcessing || !currentInput.trim() || (!hasServerKey && !userApiKey)"
+              class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
+              <span x-text="i18n.send"></span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </main>
+        
+    <!-- Footer -->
+    <div class="bg-white border-t px-4 py-3">
+      <div class="max-w-4xl mx-auto flex justify-center items-center gap-4">
+        <a href="https://groq.com" target="_blank" rel="noopener noreferrer" aria-label="Powered by Groq">
+          <img
+            src="https://console.groq.com/powered-by-groq.svg"
+            alt="Powered by Groq for fast inference."
+            class="h-8"
+          />
+        </a>
+        <a
+          href="https://github.com/janzheng/groq-mcp-nav"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="text-xs text-gray-500 underline"
+        >github</a>
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>
