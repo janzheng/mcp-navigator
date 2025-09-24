@@ -46,6 +46,9 @@ export default function mcpNavApp() {
         // Load custom API keys
         const storedCustomKeys = localStorage.getItem('custom_api_keys');
         if (storedCustomKeys) this.customApiKeys = JSON.parse(storedCustomKeys);
+        
+        // Auto-expand API key panel if no Groq API key is stored
+        this.showApiKeyPanel = !this.userApiKey;
       } catch (_) {}
       
       await this.checkServerKeys();
@@ -103,6 +106,8 @@ export default function mcpNavApp() {
     clearGroqApiKey() { 
       this.userApiKey = ''; 
       try { localStorage.removeItem('groq_api_key'); } catch (_) {} 
+      // Auto-expand API key panel when key is cleared
+      this.showApiKeyPanel = true;
     },
     
     clearParallelApiKey() { 

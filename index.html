@@ -230,18 +230,27 @@
         </div>
 
         <!-- API Key Management -->
-        <div class="border-b border-gray-200 dark:border-gray-700 pb-4 mb-4">
-          <div class="space-y-4">
+        <div class="mb-4">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-sm font-medium text-gray-700">API Keys</h3>
+            <button 
+              type="button" 
+              @click="toggleApiKeyPanel()" 
+              class="text-xs px-2 py-1 bg-gray-100 text-gray-600 rounded hover:bg-gray-200">
+              <span x-text="showApiKeyPanel ? 'Hide' : 'Show'"></span>
+            </button>
+          </div>
+          <div x-show="showApiKeyPanel" x-transition class="space-y-4">
             <!-- Groq API Key -->
             <div>
               <div x-show="!userApiKey" class="space-y-2">
-                <label class="block text-xs text-gray-600 dark:text-gray-300">Groq API Key <a href="https://console.groq.com/keys" target="_blank" class="underline hover:text-gray-600 dark:text-gray-400 dark:hover:text-gray-300">(get free api key)</a></label>
+                <label class="block text-xs text-gray-600">Groq API Key <a href="https://console.groq.com/keys" target="_blank" class="underline hover:text-gray-600">(get free api key)</a></label>
                 <div class="flex gap-2 items-center">
                   <input 
                     type="password" 
                     x-model="apiKeyInput" 
                     placeholder="Enter your Groq API key..." 
-                    class="flex-1 px-3 py-2 text-xs rounded-md focus:ring-2 focus:ring-blue-400 focus:outline-none border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400">
+                    class="flex-1 px-3 py-2 text-xs rounded-md focus:ring-2 focus:ring-blue-400 focus:outline-none border border-gray-300 bg-white">
                   <button 
                     type="button" 
                     @click="setGroqApiKey()" 
@@ -252,12 +261,12 @@
                 </div>
               </div>
               <div x-show="userApiKey" class="space-y-2">
-                <label class="block text-xs text-gray-600 dark:text-gray-300">Groq API Key <a href="https://console.groq.com/keys" target="_blank" class="underline hover:text-gray-600 dark:text-gray-400 dark:hover:text-gray-300">(get free api key)</a></label>
+                <label class="block text-xs text-gray-600">Groq API Key <a href="https://console.groq.com/keys" target="_blank" class="underline hover:text-gray-600">(get free api key)</a></label>
                 <div class="flex items-center justify-between gap-2">
-                  <code class="text-[11px] px-2 py-1 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded truncate max-w-[70%] text-gray-800 dark:text-gray-200" x-text="maskedGroqKey"></code>
+                  <code class="text-[11px] px-2 py-1 bg-white border border-gray-200 rounded truncate max-w-[70%] text-gray-800" x-text="maskedGroqKey"></code>
                   <div class="flex gap-2">
-                    <button type="button" @click="userApiKey = ''; apiKeyInput = ''" class="text-[11px] hover:text-gray-700 dark:hover:text-gray-300 underline text-gray-600 dark:text-gray-400">Change</button>
-                    <button type="button" @click="clearGroqApiKey()" class="text-[11px] hover:text-gray-700 dark:hover:text-gray-300 underline text-gray-600 dark:text-gray-400">Clear</button>
+                    <button type="button" @click="userApiKey = ''; apiKeyInput = ''" class="text-[11px] hover:text-gray-700 underline text-gray-600">Change</button>
+                    <button type="button" @click="clearGroqApiKey()" class="text-[11px] hover:text-gray-700 underline text-gray-600">Clear</button>
                   </div>
                 </div>
               </div>
@@ -266,13 +275,13 @@
             <!-- Parallel API Key -->
             <div>
               <div x-show="!parallelApiKey" class="space-y-2">
-                <label class="block text-xs text-gray-600 dark:text-gray-300">Parallel API Key <a href="https://parallel.ai" target="_blank" class="underline hover:text-gray-600 dark:text-gray-400 dark:hover:text-gray-300">(get key)</a></label>
+                <label class="block text-xs text-gray-600">Parallel API Key <a href="https://parallel.ai" target="_blank" class="underline hover:text-gray-600">(get key)</a></label>
                 <div class="flex gap-2 items-center">
                   <input 
                     type="password" 
                     x-model="parallelKeyInput" 
                     placeholder="Enter your Parallel API key..." 
-                    class="flex-1 px-3 py-2 text-xs rounded-md focus:ring-2 focus:ring-blue-400 focus:outline-none border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400">
+                    class="flex-1 px-3 py-2 text-xs rounded-md focus:ring-2 focus:ring-blue-400 focus:outline-none border border-gray-300 bg-white">
                   <button 
                     type="button" 
                     @click="setParallelApiKey()" 
@@ -283,12 +292,12 @@
                 </div>
               </div>
               <div x-show="parallelApiKey" class="space-y-2">
-                <label class="block text-xs text-gray-600 dark:text-gray-300">Parallel API Key <a href="https://parallel.ai" target="_blank" class="underline hover:text-gray-600 dark:text-gray-400 dark:hover:text-gray-300">(get key)</a></label>
+                <label class="block text-xs text-gray-600">
                 <div class="flex items-center justify-between gap-2">
-                  <code class="text-[11px] px-2 py-1 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded truncate max-w-[70%] text-gray-800 dark:text-gray-200" x-text="maskedParallelKey"></code>
+                  <code class="text-[11px] px-2 py-1 bg-white border border-gray-200 rounded truncate max-w-[70%] text-gray-800" x-text="maskedParallelKey"></code>
                   <div class="flex gap-2">
-                    <button type="button" @click="parallelApiKey = ''; parallelKeyInput = ''" class="text-[11px] hover:text-gray-700 dark:hover:text-gray-300 underline text-gray-600 dark:text-gray-400">Change</button>
-                    <button type="button" @click="clearParallelApiKey()" class="text-[11px] hover:text-gray-700 dark:hover:text-gray-300 underline text-gray-600 dark:text-gray-400">Clear</button>
+                    <button type="button" @click="parallelApiKey = ''; parallelKeyInput = ''" class="text-[11px] hover:text-gray-700 underline text-gray-600">Change</button>
+                    <button type="button" @click="clearParallelApiKey()" class="text-[11px] hover:text-gray-700 underline text-gray-600">Clear</button>
                   </div>
                 </div>
               </div>
@@ -297,7 +306,7 @@
             <!-- Custom API Keys Section -->
             <div>
               <div class="flex items-center justify-between mb-2">
-                <label class="block text-xs text-gray-600 dark:text-gray-300">Custom API Keys</label>
+                <label class="block text-xs text-gray-600">Custom API Keys</label>
                 <button 
                   type="button" 
                   @click="toggleAddApiKeyForm()" 
@@ -307,27 +316,27 @@
               </div>
               
               <!-- Add API Key Form -->
-              <div x-show="showAddApiKeyForm" class="space-y-2 mb-3 p-2 bg-gray-50 dark:bg-gray-800 rounded border">
+              <div x-show="showAddApiKeyForm" class="space-y-2 mb-3 p-2 bg-gray-50 rounded border">
                 <div>
                   <input 
                     type="text" 
                     x-model="newApiKeyName" 
                     placeholder="Key name (e.g., github, openai, huggingface)" 
-                    class="w-full px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400">
+                    class="w-full px-2 py-1 text-xs rounded border border-gray-300 bg-white">
                 </div>
                 <div>
                   <input 
                     type="password" 
                     x-model="newApiKeyValue" 
                     placeholder="API key value" 
-                    class="w-full px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400">
+                    class="w-full px-2 py-1 text-xs rounded border border-gray-300 bg-white">
                 </div>
                 <div>
                   <input 
                     type="text" 
                     x-model="newApiKeyDescription" 
                     placeholder="Description (optional)" 
-                    class="w-full px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400">
+                    class="w-full px-2 py-1 text-xs rounded border border-gray-300 bg-white">
                 </div>
                 <div class="flex gap-2">
                   <button 
@@ -343,11 +352,11 @@
               <!-- Existing Custom Keys -->
               <div x-show="Object.keys(customApiKeys).length > 0" class="space-y-2">
                 <template x-for="[keyName, keyData] in Object.entries(customApiKeys)" :key="keyName">
-                  <div class="flex items-center justify-between gap-2 p-2 bg-gray-50 dark:bg-gray-800 rounded border">
+                  <div class="flex items-center justify-between gap-2 p-2 bg-gray-50 rounded border">
                     <div class="flex-1 min-w-0">
-                      <div class="text-xs font-medium text-gray-800 dark:text-gray-200" x-text="keyData.name"></div>
-                      <div class="text-[10px] text-gray-500 dark:text-gray-400 truncate" x-text="keyData.description"></div>
-                      <code class="text-[10px] px-1 py-0.5 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded text-gray-800 dark:text-gray-200" x-text="maskedCustomKey(keyData.value)"></code>
+                      <div class="text-xs font-medium text-gray-800" x-text="keyData.name"></div>
+                      <div class="text-[10px] text-gray-500 truncate" x-text="keyData.description"></div>
+                      <code class="text-[10px] px-1 py-0.5 bg-white border border-gray-200 rounded text-gray-800" x-text="maskedCustomKey(keyData.value)"></code>
                     </div>
                     <button 
                       type="button" 
@@ -359,12 +368,12 @@
                 </template>
               </div>
               
-              <div x-show="Object.keys(customApiKeys).length === 0 && !showAddApiKeyForm" class="text-xs text-gray-500 dark:text-gray-400 italic">
+              <div x-show="Object.keys(customApiKeys).length === 0 && !showAddApiKeyForm" class="text-xs text-gray-500 italic">
                 No custom API keys configured
               </div>
             </div>
             
-            <div class="text-xs text-gray-500 dark:text-gray-400 pt-2 border-t border-gray-200 dark:border-gray-600">
+              <div class="text-xs text-gray-500 pt-2 border-t border-gray-200">
               <p>• User API keys take priority over server keys</p>
               <p>• Keys are stored locally in your browser</p>
               <p>• Custom keys are automatically mapped to MCP tools by name</p>
